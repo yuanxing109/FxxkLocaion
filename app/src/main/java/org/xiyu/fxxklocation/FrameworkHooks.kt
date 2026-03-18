@@ -141,3 +141,24 @@ internal fun stripMockFlag(loc: Location) {
     }
     try { loc.extras?.remove("mockProvider") } catch (_: Throwable) {}
 }
+
+/**
+ * Disable mock_location developer setting from system_server.
+ * Some paranoid apps check Settings.Secure.getString("mock_location").
+ * Setting it to "0" from system UID makes all apps see mock locations disabled,
+ * while our system-level test provider injection still works (system UID bypasses the check).
+ */
+internal fun ModuleMain.disableMockLocationSetting() {
+    Thread {
+        try {
+            // Wait for system to be ready
+            Thread.sleep(5000)
+            val ctx = getSystemServerContext() ?: return@Thread
+            val resolver = ctx.contentResolver
+            android.provider.Settings.Secure.putInt(resolver, "mock_location", 0)
+            log("[SYS-MOCK] mock_location setting disabled (all apps see 0)")
+        } catch (e: Throwable) {
+            log("[SYS-MOCK] disableMockLocationSetting failed: $e")
+        }
+    }.apply { name = "FL-MockSetting"; isDaemon = true }.start()
+}

@@ -1,171 +1,34 @@
 package org.xiyu.fxxklocation
 
-import android.location.Location
-import android.os.Bundle
 import android.os.IBinder
 import android.os.Parcel
 import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XposedBridge
-import de.robv.android.xposed.XposedHelpers
 
 // ============================================================
-//  LAYER 3: target app anti-mock-detection
-//  Hooks Location class in all non-FL apps to hide mock flags.
-//  Also hooks Settings.Secure to hide mock_location setting.
+//  LAYER 3: Optional per-app hooks (only for apps in LSPosed scope)
+//
+//  Mock flag stripping and GNSS injection are now handled entirely
+//  in system_server — no per-app hook needed for those.
+//  This file only contains step sensor spoofing, which requires
+//  in-process hook because SensorEvents are dispatched locally.
+//
+//  Only apps explicitly added to LSPosed scope get step spoofing.
+//  For basic GPS/GNSS spoofing, only "system" + FL is needed.
 // ============================================================
+
+/**
+ * Install optional per-app hooks. Currently only step sensor spoofing.
+ * Called for every app in LSPosed scope that isn't FL or system_server.
+ */
 internal fun ModuleMain.hookAntiMockDetection() {
-    // Location.isFromMockProvider() → false (API 18+)
-    try {
-        XposedHelpers.findAndHookMethod(
-            Location::class.java, "isFromMockProvider",
-            object : XC_MethodHook() {
-                override fun afterHookedMethod(param: MethodHookParam) {
-                    param.result = false
-                }
-            })
-    } catch (_: Throwable) {}
-
-    // Location.isMock() → false (API 31+)
-    try {
-        XposedHelpers.findAndHookMethod(
-            Location::class.java, "isMock",
-            object : XC_MethodHook() {
-                override fun afterHookedMethod(param: MethodHookParam) {
-                    param.result = false
-                }
-            })
-    } catch (_: Throwable) {}
-
-    // Location.getExtras() → remove "mockProvider" key
-    try {
-        XposedHelpers.findAndHookMethod(
-            Location::class.java, "getExtras",
-            object : XC_MethodHook() {
-                override fun afterHookedMethod(param: MethodHookParam) {
-                    val extras = param.result as? Bundle ?: return
-                    extras.remove("mockProvider")
-                }
-            })
-    } catch (_: Throwable) {}
-
-    // Settings.Secure.getString: hide "mock_location" = "0"
-    try {
-        XposedHelpers.findAndHookMethod(
-            "android.provider.Settings\$Secure", null,
-            "getString",
-            android.content.ContentResolver::class.java,
-            String::class.java,
-            object : XC_MethodHook() {
-                override fun afterHookedMethod(param: MethodHookParam) {
-                    if (param.args[1] == "mock_location") {
-                        param.result = "0"
-                    }
-                }
-            })
-    } catch (_: Throwable) {}
-
-    hookGnssCallbackInjection()
     hookStepSensorInjection()
 }
 
 // ============================================================
-//  Layer 3 GNSS callback injection (per-app)
-// ============================================================
-@Volatile
-private var gnssFeederStarted = false
-private val gnssCallbacks = java.util.concurrent.CopyOnWriteArrayList<Any>()
-
-internal fun ModuleMain.hookGnssCallbackInjection() {
-    try {
-        val gnssCallbackCls = Class.forName("android.location.GnssStatus\$Callback")
-        val lmClass = android.location.LocationManager::class.java
-
-        for (m in lmClass.declaredMethods) {
-            if (m.name != "registerGnssStatusCallback") continue
-            XposedBridge.hookMethod(m, object : XC_MethodHook() {
-                override fun afterHookedMethod(param: MethodHookParam) {
-                    if (param.throwable != null) return
-                    val cb = param.args.firstOrNull {
-                        it != null && gnssCallbackCls.isInstance(it)
-                    }
-                    if (cb != null && !gnssCallbacks.contains(cb)) {
-                        gnssCallbacks.add(cb)
-                        log("[GNSS-L3] captured GnssStatus.Callback (total=${gnssCallbacks.size})")
-                        ensureGnssFeederRunning()
-                    }
-                }
-            })
-        }
-
-        for (m in lmClass.declaredMethods) {
-            if (m.name != "unregisterGnssStatusCallback") continue
-            XposedBridge.hookMethod(m, object : XC_MethodHook() {
-                override fun beforeHookedMethod(param: MethodHookParam) {
-                    val cb = param.args.firstOrNull {
-                        it != null && gnssCallbackCls.isInstance(it)
-                    }
-                    if (cb != null) gnssCallbacks.remove(cb)
-                }
-            })
-        }
-
-        log("[GNSS-L3] registerGnssStatusCallback hooks installed")
-    } catch (e: Throwable) {
-        log("[GNSS-L3] hookGnssCallbackInjection failed: $e")
-    }
-}
-
-private fun ensureGnssFeederRunning() {
-    if (gnssFeederStarted) return
-    gnssFeederStarted = true
-
-    Thread {
-        try {
-            val gnssCallbackCls = Class.forName("android.location.GnssStatus\$Callback")
-            val onStarted = gnssCallbackCls.getMethod("onStarted")
-            val onSatChanged = gnssCallbackCls.getMethod(
-                "onSatelliteStatusChanged",
-                Class.forName("android.location.GnssStatus")
-            )
-            val onFirstFix = gnssCallbackCls.getMethod(
-                "onFirstFix", Int::class.javaPrimitiveType
-            )
-
-            Thread.sleep(500)
-
-            val handler = android.os.Handler(android.os.Looper.getMainLooper())
-            for (cb in gnssCallbacks) {
-                handler.post {
-                    try { onStarted.invoke(cb) } catch (_: Throwable) {}
-                    try { onFirstFix.invoke(cb, 800) } catch (_: Throwable) {}
-                }
-            }
-
-            log("[GNSS-L3] feeder started, dispatching to ${gnssCallbacks.size} callbacks")
-
-            while (!Thread.interrupted()) {
-                Thread.sleep(1000)
-                if (gnssCallbacks.isEmpty()) continue
-                val fakeStatus = buildFakeGnssStatus() ?: continue
-                for (cb in gnssCallbacks) {
-                    handler.post {
-                        try { onSatChanged.invoke(cb, fakeStatus) } catch (_: Throwable) {}
-                    }
-                }
-            }
-        } catch (_: InterruptedException) {
-        } catch (e: Throwable) {
-            log("[GNSS-L3] feeder error: $e")
-        }
-    }.apply {
-        name = "FL-GnssFeed"
-        isDaemon = true
-        start()
-    }
-}
-
-// ============================================================
 //  Step sensor spoofing — Layer 3 (target apps)
+//  Intercepts SensorManager.registerListener for TYPE_STEP_COUNTER(19)
+//  and TYPE_STEP_DETECTOR(18), feeds fake events matching FL step sim.
 // ============================================================
 @Volatile
 private var stepFeederStarted = false
@@ -245,7 +108,6 @@ private fun ensureStepFeederRunning() {
     Thread {
         try {
             val sensorEventCls = Class.forName("android.hardware.SensorEvent")
-            val sensorCls = Class.forName("android.hardware.Sensor")
             val listenerCls = Class.forName("android.hardware.SensorEventListener")
             val onChangedMethod = listenerCls.getMethod("onSensorChanged", sensorEventCls)
 

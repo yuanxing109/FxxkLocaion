@@ -17,6 +17,7 @@ internal fun ModuleMain.hookSystemServer() {
     installUsageStatsHook()
     installFrameworkFallbackHooks()
     installMockFlagStrip()
+    disableMockLocationSetting()
     installGnssHooks()
     installActiveGnssFromServer()
 
