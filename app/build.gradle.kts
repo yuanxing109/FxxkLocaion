@@ -34,6 +34,17 @@ android {
 
     packaging {
         resources {
+            excludes += setOf(
+                "kotlin/**",
+                "META-INF/*.version",
+                "META-INF/LICENSE*",
+                "META-INF/NOTICE*",
+                "META-INF/INDEX.LIST",
+                "META-INF/MANIFEST.MF",
+                "DebugProbesKt.bin"
+            )
+        }
+        jniLibs {
             excludes += "**"
         }
     }
