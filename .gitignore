@@ -5,3 +5,8 @@
 /captures
 /local.properties
 build
+*.apk
+*.ap_
+*.aab
+*.hprof
+*.log

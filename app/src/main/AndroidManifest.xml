@@ -4,9 +4,18 @@
 
     <application
         android:description="@android:string/unknownName"
-        android:label="Xposed Example"
+        android:label="fxxklocation"
         android:theme="@android:style/Theme.DeviceDefault"
         tools:ignore="MissingApplicationIcon">
+        <meta-data
+            android:name="xposedminversion"
+            android:value="93" />
+        <meta-data
+            android:name="xposedmodule"
+            android:value="true" />
+        <meta-data
+            android:name="xposeddescription"
+            android:value="Bypass FakeLocation blacklist restrictions" />
         <activity
             android:name=".MainActivity"
             android:exported="true">

@@ -4,7 +4,7 @@ plugins {
 }
 
 android {
-    namespace = "io.github.libxposed.example"
+    namespace = "org.xiyu.fxxklocation"
     compileSdk = 34
     buildToolsVersion = "34.0.0"
 
@@ -12,20 +12,15 @@ android {
         minSdk = 24
         targetSdk = 34
         versionCode = 1
-        versionName = "1.0"
+        versionName = "1.0.0"
     }
 
     buildTypes {
         release {
             isMinifyEnabled = true
-            isShrinkResources = true
             proguardFiles("proguard-rules.pro")
             signingConfig = signingConfigs["debug"]
         }
-    }
-
-    buildFeatures {
-        viewBinding = true
     }
 
     kotlin {
@@ -39,7 +34,6 @@ android {
 
     packaging {
         resources {
-            merges += "META-INF/xposed/*"
             excludes += "**"
         }
     }
@@ -51,6 +45,5 @@ android {
 }
 
 dependencies {
-    compileOnly(libs.libxposed.api)
-    implementation(libs.libxposed.service)
+    compileOnly(files("libs/xposed-api-stub.jar"))
 }
